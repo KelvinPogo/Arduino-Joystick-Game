@@ -36,6 +36,10 @@ ENEMY_SPEED = 90.0
 SPAWN_INTERVAL_START = 1.3
 SPAWN_INTERVAL_MIN = 0.45
 
+POWERUP_RADIUS = 14
+POWERUP_SPAWN_INTERVAL = 15.0
+POWERUP_HEAL_AMOUNT = 1
+
 BG_COLOR = (18, 20, 28)
 ARENA_COLOR = (34, 38, 52)
 ARENA_BORDER = (90, 100, 140)
@@ -43,6 +47,7 @@ HERO_BODY = (60, 130, 246)
 HERO_CAPE = (220, 50, 50)
 BULLET_COLOR = (250, 220, 90)
 ENEMY_COLOR = (200, 60, 90)
+POWERUP_COLOR = (80, 220, 120)
 TEXT_COLOR = (235, 235, 240)
 
 
@@ -132,6 +137,21 @@ class Enemy:
         pygame.draw.circle(surface, (30, 10, 15), self.pos, ENEMY_RADIUS, 2)
 
 
+class PowerUp:
+    def __init__(self):
+        self.pos = pygame.Vector2(
+            random.uniform(ARENA.left + POWERUP_RADIUS, ARENA.right - POWERUP_RADIUS),
+            random.uniform(ARENA.top + POWERUP_RADIUS, ARENA.bottom - POWERUP_RADIUS),
+        )
+
+    def draw(self, surface):
+        pygame.draw.circle(surface, POWERUP_COLOR, self.pos, POWERUP_RADIUS)
+        pygame.draw.circle(surface, (20, 60, 30), self.pos, POWERUP_RADIUS, 2)
+        arm = POWERUP_RADIUS * 0.5
+        pygame.draw.line(surface, (255, 255, 255), self.pos + (-arm, 0), self.pos + (arm, 0), 3)
+        pygame.draw.line(surface, (255, 255, 255), self.pos + (0, -arm), self.pos + (0, arm), 3)
+
+
 class Game:
     def __init__(self):
         pygame.init()
@@ -151,8 +171,10 @@ class Game:
         self.player = Player()
         self.bullets = []
         self.enemies = []
+        self.powerups = []
         self.score = 0
         self.spawn_timer = SPAWN_INTERVAL_START
+        self.powerup_timer = POWERUP_SPAWN_INTERVAL
         self.shoot_cooldown = 0.0
         self.game_over = False
         self._prev_button = False
@@ -221,6 +243,19 @@ class Game:
                 remaining_enemies.append(enemy)
         self.enemies = remaining_enemies
 
+        self.powerup_timer -= dt
+        if self.powerup_timer <= 0:
+            self.powerups.append(PowerUp())
+            self.powerup_timer = POWERUP_SPAWN_INTERVAL
+
+        remaining_powerups = []
+        for powerup in self.powerups:
+            if powerup.pos.distance_to(self.player.pos) < POWERUP_RADIUS + PLAYER_RADIUS:
+                self.player.lives = min(PLAYER_MAX_LIVES, self.player.lives + POWERUP_HEAL_AMOUNT)
+            else:
+                remaining_powerups.append(powerup)
+        self.powerups = remaining_powerups
+
         if self.player.lives <= 0:
             self.game_over = True
 
@@ -231,6 +266,8 @@ class Game:
 
         for bullet in self.bullets:
             bullet.draw(self.screen)
+        for powerup in self.powerups:
+            powerup.draw(self.screen)
         for enemy in self.enemies:
             enemy.draw(self.screen)
         self.player.draw(self.screen)
