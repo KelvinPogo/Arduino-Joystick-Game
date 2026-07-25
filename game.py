@@ -1,8 +1,9 @@
 """Superhero vs. Enemies - a simple 2D shooter controlled by an Arduino joystick.
 
 Controls:
-  Joystick        - move the hero around the arena
-  Joystick button - shoot in the direction you're facing
+  Joystick             - move the hero around the arena
+  External shoot button - shoot in the direction you're facing
+  Joystick button       - restart after game over
   (Fallback) WASD/Arrows to move, Space to shoot, R to restart, Esc to quit.
 """
 
@@ -160,7 +161,7 @@ class Game:
         return max(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_START - self.score * 0.03)
 
     def handle_input(self, dt, keys):
-        jx, jy, jbtn = self.joystick.read()
+        jx, jy, jbtn, jshoot = self.joystick.read()
 
         kx = (1 if keys[pygame.K_RIGHT] or keys[pygame.K_d] else 0) - \
              (1 if keys[pygame.K_LEFT] or keys[pygame.K_a] else 0)
@@ -170,7 +171,7 @@ class Game:
         move_x = jx if jx != 0 else kx
         move_y = jy if jy != 0 else ky
 
-        shoot_held = jbtn or keys[pygame.K_SPACE]
+        shoot_held = jshoot or keys[pygame.K_SPACE]
         self._prev_button = jbtn
 
         if not self.game_over:
@@ -272,10 +273,10 @@ class Game:
             keys = pygame.key.get_pressed()
 
             if self.game_over:
-                _, _, jbtn = self.joystick.read()
-                if jbtn and not self._prev_button:
+                _, _, jbtn, jshoot = self.joystick.read()
+                if (jbtn or jshoot) and not self._prev_button:
                     self.reset()
-                self._prev_button = jbtn
+                self._prev_button = jbtn or jshoot
             else:
                 self.handle_input(dt, keys)
                 self.update(dt)

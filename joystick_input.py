@@ -1,4 +1,4 @@
-"""Background reader for the Arduino joystick, streaming 'x,y,btn' lines over serial.
+"""Background reader for the Arduino joystick, streaming 'x,y,btn,shootBtn' lines over serial.
 
 Falls back gracefully (state just stays at rest) if the port can't be opened,
 so the game is still playable with keyboard controls alone.
@@ -11,7 +11,7 @@ import serial
 PORT = "COM7"
 BAUD = 9600
 
-# Observed at rest: ~503,505,1 (button reads 1 when released, 0 when pressed
+# Observed at rest: ~503,507,1,1 (buttons read 1 when released, 0 when pressed
 # via INPUT_PULLUP wiring). Flip these if your board's axes are mirrored.
 CENTER_X = 503
 CENTER_Y = 505
@@ -26,7 +26,8 @@ class JoystickReader:
         self._lock = threading.Lock()
         self._x = 0.0  # normalized -1..1
         self._y = 0.0
-        self._pressed = False
+        self._pressed = False  # joystick's own button
+        self._shoot_pressed = False  # external shoot button
         self.connected = False
 
         try:
@@ -48,9 +49,9 @@ class JoystickReader:
                 if not line:
                     continue
                 parts = line.split(",")
-                if len(parts) != 3:
+                if len(parts) != 4:
                     continue
-                raw_x, raw_y, raw_btn = (int(p) for p in parts)
+                raw_x, raw_y, raw_btn, raw_shoot = (int(p) for p in parts)
             except Exception:
                 continue
 
@@ -71,8 +72,9 @@ class JoystickReader:
                 self._x = x
                 self._y = y
                 self._pressed = raw_btn == 0
+                self._shoot_pressed = raw_shoot == 0
 
     def read(self):
-        """Returns (x, y, pressed) with x/y normalized to -1..1."""
+        """Returns (x, y, pressed, shoot_pressed) with x/y normalized to -1..1."""
         with self._lock:
-            return self._x, self._y, self._pressed
+            return self._x, self._y, self._pressed, self._shoot_pressed
