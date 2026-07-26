@@ -105,6 +105,15 @@ TORCH_RADIUS = 40  # small, subtle halo right at the flame - not a room-filling 
 TORCH_BRACKET_LENGTH = 22
 TORCH_FLAME_OFFSET = 28
 
+# Title screen.
+TITLE_STONE_LIGHT = (214, 194, 156)
+TITLE_STONE_DARK = (94, 78, 58)
+TITLE_RIBBON_A = (224, 70, 150)
+TITLE_RIBBON_B = (206, 48, 58)
+TITLE_PANEL_COLOR = (16, 12, 16)
+TITLE_PANEL_RIM = (168, 66, 96)
+TITLE_MASCOT_COLOR = (222, 150, 74)
+
 
 def clamp(value, lo, hi):
     return max(lo, min(hi, value))
@@ -186,6 +195,12 @@ def _build_shield_surf(size, radius, color):
     return surf
 
 
+def _build_horizontal_gradient(w, h, color_a, color_b):
+    t = np.linspace(0, 1, w)
+    rgb = np.zeros((h, w, 3), dtype=np.uint8)
+    for c in range(3):
+        rgb[:, :, c] = (color_a[c] * (1 - t) + color_b[c] * t).astype(np.uint8)
+    return pygame.image.frombuffer(rgb.tobytes(), (w, h), "RGB").convert()
 
 
 class Player:
@@ -493,12 +508,16 @@ class Game:
     def __init__(self):
         pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=512)
         pygame.init()
-        pygame.display.set_caption("Superhero vs. Enemies")
+        pygame.display.set_caption("Enter the Larpgeon")
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas", 28)
         self.big_font = pygame.font.SysFont("consolas", 56, bold=True)
+        self.title_font = pygame.font.SysFont("consolas", 76, bold=True)
+        self.ribbon_font = pygame.font.SysFont("consolas", 30, bold=True)
         self.sounds = sounds.build_sounds()
+
+        self.title_ribbon_surf = _build_horizontal_gradient(520, 56, TITLE_RIBBON_A, TITLE_RIBBON_B)
 
         self.world_surface = pygame.Surface((WIDTH, HEIGHT)).convert()
         self.vignette_surf = _build_vignette_surface(WIDTH, HEIGHT)
@@ -523,6 +542,11 @@ class Game:
         if not self.joystick.connected:
             print("[game] Joystick not connected - using keyboard fallback.")
 
+        self.title_screen = True
+        self._prev_start_button = False
+
+    def start_game(self):
+        self.title_screen = False
         self.reset()
 
     def reset(self):
@@ -790,9 +814,101 @@ class Game:
         hint_surf = self.font.render("Shield ready! [E]", True, SHIELD_COLOR)
         self.screen.blit(hint_surf, hint_surf.get_rect(midtop=(cx, cy + 24)))
 
+    def _draw_chunky_title(self, text, topleft):
+        depth = 7
+        for i in range(depth, 0, -1):
+            t = i / depth
+            shade = tuple(
+                int(TITLE_STONE_DARK[c] + (TITLE_STONE_LIGHT[c] - TITLE_STONE_DARK[c]) * (1 - t) * 0.4)
+                for c in range(3)
+            )
+            layer = self.title_font.render(text, True, shade)
+            self.screen.blit(layer, (topleft[0] + i, topleft[1] + i))
+        outline = self.title_font.render(text, True, OUTLINE_COLOR)
+        for ox, oy in ((-2, 0), (2, 0), (0, -2), (0, 2)):
+            self.screen.blit(outline, (topleft[0] + ox, topleft[1] + oy))
+        main = self.title_font.render(text, True, TITLE_STONE_LIGHT)
+        return self.screen.blit(main, topleft)
+
+    def _draw_mascot_face(self, center, radius=24):
+        pygame.draw.circle(self.screen, TITLE_MASCOT_COLOR, center, radius)
+        pygame.draw.circle(self.screen, OUTLINE_COLOR, center, radius, 3)
+        for side_sign in (-1, 1):
+            eye_pos = (center[0] + side_sign * radius * 0.4, center[1] - radius * 0.1)
+            pygame.draw.ellipse(
+                self.screen, OUTLINE_COLOR,
+                pygame.Rect(0, 0, radius * 0.3, radius * 0.4).move(eye_pos[0] - radius * 0.15, eye_pos[1] - radius * 0.2),
+            )
+        pygame.draw.arc(
+            self.screen, OUTLINE_COLOR,
+            pygame.Rect(center[0] - radius * 0.4, center[1] + radius * 0.1, radius * 0.8, radius * 0.55),
+            math.pi, 2 * math.pi, 2,
+        )
+
+    def draw_title_screen(self):
+        self.screen.fill(BG_COLOR)
+        self.screen.blit(self.vignette_surf, (0, 0))
+
+        panel_w, panel_h = 620, 320
+        panel_rect = pygame.Rect(0, 0, panel_w, panel_h)
+        panel_rect.center = (WIDTH // 2, HEIGHT // 2 - 40)
+        pygame.draw.rect(self.screen, TITLE_PANEL_COLOR, panel_rect, border_radius=18)
+        pygame.draw.rect(self.screen, TITLE_PANEL_RIM, panel_rect, 4, border_radius=18)
+
+        ribbon_rect = self.title_ribbon_surf.get_rect(midtop=(panel_rect.centerx, panel_rect.top + 34))
+        self.screen.blit(self.title_ribbon_surf, ribbon_rect)
+        ribbon_text = self.ribbon_font.render("ENTER THE", True, (250, 240, 235))
+        self.screen.blit(ribbon_text, ribbon_text.get_rect(center=ribbon_rect.center))
+
+        # "LARPGE" + a mascot face standing in for the O + "N", so the mascot
+        # reads as part of the logo rather than overlapping a letter.
+        prefix, suffix = "LARPGE", "N"
+        prefix_w, text_h = self.title_font.size(prefix)
+        suffix_w, _ = self.title_font.size(suffix)
+        face_slot = text_h * 0.66
+        total_w = prefix_w + face_slot + suffix_w
+        start_x = panel_rect.centerx - total_w / 2
+        top_y = panel_rect.top + 100
+
+        prefix_rect = self._draw_chunky_title(prefix, (start_x, top_y))
+        face_center = (start_x + prefix_w + face_slot / 2, prefix_rect.centery)
+        self._draw_mascot_face(face_center, radius=face_slot / 2)
+        self._draw_chunky_title(suffix, (start_x + prefix_w + face_slot, top_y))
+
+        if int(pygame.time.get_ticks() / 500) % 2 == 0:
+            prompt = self.font.render(
+                "Press SPACE or the joystick button to start", True, TEXT_COLOR,
+            )
+            self.screen.blit(prompt, prompt.get_rect(center=(panel_rect.centerx, panel_rect.bottom - 34)))
+
+        conn_text = "Joystick: connected" if self.joystick.connected else "Joystick: keyboard fallback"
+        self._draw_panel_text(conn_text, (12, HEIGHT - 42), color=(190, 170, 140))
+
+        pygame.display.flip()
+
     def run(self):
         while True:
             dt = self.clock.tick(60) / 1000.0
+
+            if self.title_screen:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        pygame.quit()
+                        sys.exit()
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE:
+                            pygame.quit()
+                            sys.exit()
+                        if event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                            self.start_game()
+
+                if self.title_screen:
+                    _, _, jbtn, jshoot, _ = self.joystick.read()
+                    if (jbtn or jshoot) and not self._prev_start_button:
+                        self.start_game()
+                    self._prev_start_button = jbtn or jshoot
+                    self.draw_title_screen()
+                continue
 
             if self.win and self.win_timer > 0:
                 self.win_timer = max(0.0, self.win_timer - dt)
