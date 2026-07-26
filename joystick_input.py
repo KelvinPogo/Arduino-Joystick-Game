@@ -1,4 +1,4 @@
-"""Background reader for the Arduino joystick, streaming 'x,y,btn,shootBtn' lines over serial.
+"""Background reader for the Arduino joystick, streaming 'x,y,btn,shootBtn,shieldBtn' lines over serial.
 
 Falls back gracefully (state just stays at rest) if the port can't be opened,
 so the game is still playable with keyboard controls alone.
@@ -28,6 +28,7 @@ class JoystickReader:
         self._y = 0.0
         self._pressed = False  # joystick's own button
         self._shoot_pressed = False  # external shoot button
+        self._shield_pressed = False  # external shield button
         self.connected = False
 
         try:
@@ -49,9 +50,9 @@ class JoystickReader:
                 if not line:
                     continue
                 parts = line.split(",")
-                if len(parts) != 4:
+                if len(parts) != 5:
                     continue
-                raw_x, raw_y, raw_btn, raw_shoot = (int(p) for p in parts)
+                raw_x, raw_y, raw_btn, raw_shoot, raw_shield = (int(p) for p in parts)
             except Exception:
                 continue
 
@@ -73,8 +74,18 @@ class JoystickReader:
                 self._y = y
                 self._pressed = raw_btn == 0
                 self._shoot_pressed = raw_shoot == 0
+                self._shield_pressed = raw_shield == 0
 
     def read(self):
-        """Returns (x, y, pressed, shoot_pressed) with x/y normalized to -1..1."""
+        """Returns (x, y, pressed, shoot_pressed, shield_pressed) with x/y normalized to -1..1."""
         with self._lock:
-            return self._x, self._y, self._pressed, self._shoot_pressed
+            return self._x, self._y, self._pressed, self._shoot_pressed, self._shield_pressed
+
+    def send(self, message):
+        """Sends a line to the Arduino's LCD. No-op if the port isn't connected."""
+        if not self.connected:
+            return
+        try:
+            self._ser.write((message + "\n").encode())
+        except Exception:
+            pass

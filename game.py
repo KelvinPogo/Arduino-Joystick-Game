@@ -1,10 +1,15 @@
 """Superhero vs. Enemies - a simple 2D shooter controlled by an Arduino joystick.
 
 Controls:
-  Joystick             - move the hero around the arena
-  External shoot button - shoot in the direction you're facing
-  Joystick button       - restart after game over
+  Joystick               - move the hero around the arena
+  External shoot button  - shoot in the direction you're facing
+  External shield button - activate shield (when the shield icon is showing)
+  Joystick button        - restart after game over
+  E                      - activate shield (when the shield icon is showing)
   (Fallback) WASD/Arrows to move, Space to shoot, R to restart, Esc to quit.
+
+Every 20 seconds a shield icon appears at the top of the screen; press E while
+it's showing to become invulnerable for 6 seconds.
 """
 
 import math
@@ -40,6 +45,9 @@ POWERUP_RADIUS = 24
 POWERUP_SPAWN_INTERVAL = 15.0
 POWERUP_HEAL_AMOUNT = 1
 
+SHIELD_COOLDOWN = 20.0
+SHIELD_DURATION = 6.0
+
 BG_COLOR = (18, 20, 28)
 ARENA_COLOR = (34, 38, 52)
 ARENA_BORDER = (90, 100, 140)
@@ -48,6 +56,7 @@ HERO_CAPE = (220, 50, 50)
 BULLET_COLOR = (250, 220, 90)
 ENEMY_COLOR = (200, 60, 90)
 POWERUP_COLOR = (80, 220, 120)
+SHIELD_COLOR = (90, 200, 255)
 TEXT_COLOR = (235, 235, 240)
 
 
@@ -61,6 +70,11 @@ class Player:
         self.facing = pygame.Vector2(0, -1)
         self.lives = PLAYER_MAX_LIVES
         self.invulnerable = 0.0
+        self.shield_timer = 0.0
+
+    @property
+    def shielded(self):
+        return self.shield_timer > 0
 
     def update(self, dt, move_x, move_y):
         move = pygame.Vector2(move_x, move_y)
@@ -75,8 +89,12 @@ class Player:
 
         if self.invulnerable > 0:
             self.invulnerable = max(0.0, self.invulnerable - dt)
+        if self.shield_timer > 0:
+            self.shield_timer = max(0.0, self.shield_timer - dt)
 
     def hit(self):
+        if self.shielded:
+            return False
         if self.invulnerable <= 0:
             self.lives -= 1
             self.invulnerable = INVULNERABLE_TIME
@@ -87,6 +105,11 @@ class Player:
         flashing = self.invulnerable > 0 and int(self.invulnerable * 10) % 2 == 0
         if flashing:
             return
+        if self.shielded:
+            shield_surf = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+            pygame.draw.circle(shield_surf, (*SHIELD_COLOR, 90), self.pos, PLAYER_RADIUS + 12)
+            pygame.draw.circle(shield_surf, (*SHIELD_COLOR, 200), self.pos, PLAYER_RADIUS + 12, 3)
+            surface.blit(shield_surf, (0, 0))
         cape_tip = self.pos - self.facing * (PLAYER_RADIUS * 2.2)
         side = pygame.Vector2(-self.facing.y, self.facing.x)
         cape_a = self.pos + side * PLAYER_RADIUS * 0.8
@@ -176,14 +199,25 @@ class Game:
         self.spawn_timer = SPAWN_INTERVAL_START
         self.powerup_timer = POWERUP_SPAWN_INTERVAL
         self.shoot_cooldown = 0.0
+        self.shield_ready_timer = SHIELD_COOLDOWN
+        self.shield_available = False
         self.game_over = False
         self._prev_button = False
+        self._prev_shield_button = False
+        self.joystick.send("Ready, Go!")
+
+    def activate_shield(self):
+        if self.shield_available and not self.game_over:
+            self.shield_available = False
+            self.player.shield_timer = SHIELD_DURATION
+            self.shield_ready_timer = SHIELD_COOLDOWN
+            self.joystick.send("Shield!")
 
     def spawn_interval(self):
         return max(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_START - self.score * 0.03)
 
     def handle_input(self, dt, keys):
-        jx, jy, jbtn, jshoot = self.joystick.read()
+        jx, jy, jbtn, jshoot, jshield = self.joystick.read()
 
         kx = (1 if keys[pygame.K_RIGHT] or keys[pygame.K_d] else 0) - \
              (1 if keys[pygame.K_LEFT] or keys[pygame.K_a] else 0)
@@ -195,6 +229,10 @@ class Game:
 
         shoot_held = jshoot or keys[pygame.K_SPACE]
         self._prev_button = jbtn
+
+        if jshield and not self._prev_shield_button:
+            self.activate_shield()
+        self._prev_shield_button = jshield
 
         if not self.game_over:
             self.player.update(dt, move_x, move_y)
@@ -252,12 +290,19 @@ class Game:
         for powerup in self.powerups:
             if powerup.pos.distance_to(self.player.pos) < POWERUP_RADIUS + PLAYER_RADIUS:
                 self.player.lives = min(PLAYER_MAX_LIVES, self.player.lives + POWERUP_HEAL_AMOUNT)
+                self.joystick.send("Health Up!")
             else:
                 remaining_powerups.append(powerup)
         self.powerups = remaining_powerups
 
-        if self.player.lives <= 0:
+        if not self.shield_available:
+            self.shield_ready_timer -= dt
+            if self.shield_ready_timer <= 0:
+                self.shield_available = True
+
+        if self.player.lives <= 0 and not self.game_over:
             self.game_over = True
+            self.joystick.send("Game Over")
 
     def draw(self):
         self.screen.fill(BG_COLOR)
@@ -283,6 +328,9 @@ class Game:
         conn_surf = self.font.render(conn_text, True, (140, 150, 170))
         self.screen.blit(conn_surf, (16, HEIGHT - 34))
 
+        if self.shield_available:
+            self.draw_shield_icon((WIDTH // 2, 34))
+
         if self.game_over:
             over_surf = self.big_font.render("GAME OVER", True, (255, 90, 90))
             self.screen.blit(over_surf, over_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 30)))
@@ -292,6 +340,17 @@ class Game:
             self.screen.blit(hint_surf, hint_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 30)))
 
         pygame.display.flip()
+
+    def draw_shield_icon(self, center):
+        cx, cy = center
+        points = [
+            (cx, cy - 16), (cx + 13, cy - 8), (cx + 13, cy + 6),
+            (cx, cy + 18), (cx - 13, cy + 6), (cx - 13, cy - 8),
+        ]
+        pygame.draw.polygon(self.screen, SHIELD_COLOR, points)
+        pygame.draw.polygon(self.screen, (20, 60, 90), points, 2)
+        hint_surf = self.font.render("Shield ready! [E]", True, SHIELD_COLOR)
+        self.screen.blit(hint_surf, hint_surf.get_rect(midtop=(cx, cy + 24)))
 
     def run(self):
         while True:
@@ -306,11 +365,13 @@ class Game:
                         sys.exit()
                     if event.key == pygame.K_r and self.game_over:
                         self.reset()
+                    if event.key == pygame.K_e:
+                        self.activate_shield()
 
             keys = pygame.key.get_pressed()
 
             if self.game_over:
-                _, _, jbtn, jshoot = self.joystick.read()
+                _, _, jbtn, jshoot, _ = self.joystick.read()
                 if (jbtn or jshoot) and not self._prev_button:
                     self.reset()
                 self._prev_button = jbtn or jshoot
