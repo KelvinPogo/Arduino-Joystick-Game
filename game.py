@@ -18,6 +18,7 @@ import sys
 
 import pygame
 
+import sounds
 from joystick_input import JoystickReader
 
 WIDTH, HEIGHT = 800, 800
@@ -214,7 +215,7 @@ class Boss:
             self.pos.y = min(self.target_y, self.pos.y + BOSS_DESCEND_SPEED * dt)
             if self.pos.y >= self.target_y:
                 self.descending = False
-            return
+            return False
 
         self.pos.x += self.direction * BOSS_SPEED * dt
         if self.pos.x < ARENA.left + BOSS_RADIUS:
@@ -237,6 +238,8 @@ class Boss:
         if self.ring_timer <= 0:
             self.ring_timer = random.uniform(BOSS_RING_INTERVAL_MIN, BOSS_RING_INTERVAL_MAX)
             self._fire_ring(projectiles)
+            return True
+        return False
 
     def _fire_ring(self, projectiles):
         for i in range(BOSS_RING_PROJECTILE_COUNT):
@@ -279,12 +282,14 @@ class PowerUp:
 
 class Game:
     def __init__(self):
+        pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=512)
         pygame.init()
         pygame.display.set_caption("Superhero vs. Enemies")
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas", 28)
         self.big_font = pygame.font.SysFont("consolas", 56, bold=True)
+        self.sounds = sounds.build_sounds()
 
         self.joystick = JoystickReader()
         if not self.joystick.connected:
@@ -319,6 +324,7 @@ class Game:
             self.player.shield_timer = SHIELD_DURATION
             self.shield_ready_timer = SHIELD_COOLDOWN
             self.joystick.send("Shield!")
+            self.sounds["shield"].play()
 
     def spawn_interval(self):
         return max(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_START - self.score * 0.03)
@@ -348,6 +354,7 @@ class Game:
             if shoot_held and self.shoot_cooldown <= 0:
                 self.bullets.append(Bullet(self.player.pos, self.player.facing))
                 self.shoot_cooldown = SHOOT_COOLDOWN
+                self.sounds["shoot"].play()
 
     def update(self, dt):
         if self.game_over or self.win:
@@ -397,7 +404,8 @@ class Game:
         self.enemies = remaining_enemies
 
         if self.boss is not None:
-            self.boss.update(dt, self.boss_projectiles)
+            if self.boss.update(dt, self.boss_projectiles):
+                self.sounds["boss_shoot"].play()
 
             remaining_bullets = []
             for bullet in self.bullets:
@@ -407,6 +415,7 @@ class Game:
                         if self.boss.hp <= 0 and not self.win:
                             self.win = True
                             self.joystick.send("You Win!")
+                            self.sounds["you_win"].play()
                 else:
                     remaining_bullets.append(bullet)
             self.bullets = remaining_bullets
@@ -436,6 +445,7 @@ class Game:
             if powerup.pos.distance_to(self.player.pos) < POWERUP_RADIUS + PLAYER_RADIUS:
                 self.player.lives = min(PLAYER_MAX_LIVES, self.player.lives + POWERUP_HEAL_AMOUNT)
                 self.joystick.send("Health Up!")
+                self.sounds["health_up"].play()
             else:
                 remaining_powerups.append(powerup)
         self.powerups = remaining_powerups
@@ -448,6 +458,7 @@ class Game:
         if self.player.lives <= 0 and not self.game_over and not self.win:
             self.game_over = True
             self.joystick.send("Game Over")
+            self.sounds["game_over"].play()
 
     def draw(self):
         self.screen.fill(BG_COLOR)
