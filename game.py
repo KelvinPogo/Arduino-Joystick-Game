@@ -51,7 +51,7 @@ SHIELD_DURATION = 6.0
 
 BOSS_TRIGGER_TIME = 60.0  # seconds of gameplay before the boss shows up
 BOSS_RADIUS = 55
-BOSS_SPEED = 40.0  # slower than a regular enemy
+BOSS_SPEED = 110.0  # faster than a regular enemy
 BOSS_DESCEND_SPEED = 100.0
 BOSS_DESCEND_TARGET_Y_OFFSET = 140
 BOSS_HP = 45
@@ -59,9 +59,13 @@ BOSS_RING_INTERVAL_MIN = 2.5
 BOSS_RING_INTERVAL_MAX = 4.0
 BOSS_RING_PROJECTILE_COUNT = 10
 BOSS_PROJECTILE_SPEED = 220.0
-BOSS_SHIELD_ROLL_INTERVAL = 6.0
-BOSS_SHIELD_CHANCE = 0.4
+BOSS_SHIELD_ROLL_INTERVAL = 3.0
+BOSS_SHIELD_CHANCE = 0.7
 BOSS_SHIELD_DURATION = 3.5
+BOSS_TELEPORT_INTERVAL_MIN = 4.0
+BOSS_TELEPORT_INTERVAL_MAX = 7.0
+
+WIN_LINGER_TIME = 5.0  # seconds the "You Win" screen ignores restart input
 
 BG_COLOR = (18, 20, 28)
 ARENA_COLOR = (34, 38, 52)
@@ -201,29 +205,37 @@ class Boss:
         self.hp = BOSS_HP
         self.descending = True
         self.target_y = ARENA.top + BOSS_DESCEND_TARGET_Y_OFFSET
-        self.direction = random.choice([-1, 1])
         self.shield_timer = 0.0
         self.shield_roll_timer = BOSS_SHIELD_ROLL_INTERVAL
         self.ring_timer = random.uniform(BOSS_RING_INTERVAL_MIN, BOSS_RING_INTERVAL_MAX)
+        self.teleport_timer = random.uniform(BOSS_TELEPORT_INTERVAL_MIN, BOSS_TELEPORT_INTERVAL_MAX)
+        self.teleport_flash = 0.0
 
     @property
     def shielded(self):
         return self.shield_timer > 0
 
-    def update(self, dt, projectiles):
+    def update(self, dt, target_pos, projectiles):
         if self.descending:
             self.pos.y = min(self.target_y, self.pos.y + BOSS_DESCEND_SPEED * dt)
             if self.pos.y >= self.target_y:
                 self.descending = False
             return False
 
-        self.pos.x += self.direction * BOSS_SPEED * dt
-        if self.pos.x < ARENA.left + BOSS_RADIUS:
-            self.pos.x = ARENA.left + BOSS_RADIUS
-            self.direction = 1
-        elif self.pos.x > ARENA.right - BOSS_RADIUS:
-            self.pos.x = ARENA.right - BOSS_RADIUS
-            self.direction = -1
+        direction = target_pos - self.pos
+        if direction.length_squared() > 0:
+            direction.normalize_ip()
+            self.pos += direction * BOSS_SPEED * dt
+
+        if self.teleport_flash > 0:
+            self.teleport_flash = max(0.0, self.teleport_flash - dt)
+
+        self.teleport_timer -= dt
+        if self.teleport_timer <= 0:
+            self.teleport_timer = random.uniform(BOSS_TELEPORT_INTERVAL_MIN, BOSS_TELEPORT_INTERVAL_MAX)
+            self.pos.x = random.uniform(ARENA.left + BOSS_RADIUS, ARENA.right - BOSS_RADIUS)
+            self.pos.y = random.uniform(ARENA.top + BOSS_RADIUS, ARENA.bottom - BOSS_RADIUS)
+            self.teleport_flash = 0.3
 
         if self.shield_timer > 0:
             self.shield_timer = max(0.0, self.shield_timer - dt)
@@ -248,6 +260,12 @@ class Boss:
             projectiles.append(BossProjectile(self.pos, direction))
 
     def draw(self, surface):
+        if self.teleport_flash > 0:
+            flash_surf = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+            alpha = int(220 * (self.teleport_flash / 0.3))
+            radius = BOSS_RADIUS + int(40 * (1 - self.teleport_flash / 0.3))
+            pygame.draw.circle(flash_surf, (*BOSS_COLOR, alpha), self.pos, radius, 4)
+            surface.blit(flash_surf, (0, 0))
         if self.shielded:
             shield_surf = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
             pygame.draw.circle(shield_surf, (*SHIELD_COLOR, 90), self.pos, BOSS_RADIUS + 14)
@@ -310,6 +328,7 @@ class Game:
         self.shield_available = False
         self.game_over = False
         self.win = False
+        self.win_timer = 0.0
         self.elapsed = 0.0
         self.boss = None
         self.boss_spawned = False
@@ -398,13 +417,14 @@ class Game:
         remaining_enemies = []
         for enemy in self.enemies:
             if enemy.pos.distance_to(self.player.pos) < ENEMY_RADIUS + PLAYER_RADIUS:
-                self.player.hit()
+                if self.player.hit():
+                    self.sounds["damage"].play()
             else:
                 remaining_enemies.append(enemy)
         self.enemies = remaining_enemies
 
         if self.boss is not None:
-            if self.boss.update(dt, self.boss_projectiles):
+            if self.boss.update(dt, self.player.pos, self.boss_projectiles):
                 self.sounds["boss_shoot"].play()
 
             remaining_bullets = []
@@ -414,6 +434,7 @@ class Game:
                         self.boss.hp -= 1
                         if self.boss.hp <= 0 and not self.win:
                             self.win = True
+                            self.win_timer = WIN_LINGER_TIME
                             self.joystick.send("You Win!")
                             self.sounds["you_win"].play()
                 else:
@@ -421,7 +442,8 @@ class Game:
             self.bullets = remaining_bullets
 
             if self.boss.pos.distance_to(self.player.pos) < BOSS_RADIUS + PLAYER_RADIUS:
-                self.player.hit()
+                if self.player.hit():
+                    self.sounds["damage"].play()
 
         for projectile in self.boss_projectiles:
             projectile.update(dt)
@@ -430,7 +452,8 @@ class Game:
         remaining_projectiles = []
         for projectile in self.boss_projectiles:
             if projectile.pos.distance_to(self.player.pos) < ENEMY_RADIUS + PLAYER_RADIUS:
-                self.player.hit()
+                if self.player.hit():
+                    self.sounds["damage"].play()
             else:
                 remaining_projectiles.append(projectile)
         self.boss_projectiles = remaining_projectiles
@@ -502,9 +525,11 @@ class Game:
         if self.win:
             win_surf = self.big_font.render("YOU WIN", True, WIN_COLOR)
             self.screen.blit(win_surf, win_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 30)))
-            hint_surf = self.font.render(
-                "Press R or the joystick button to restart", True, WIN_COLOR,
-            )
+            if self.win_timer > 0:
+                hint_text = f"Restart available in {self.win_timer:.1f}s"
+            else:
+                hint_text = "Press R or the joystick button to restart"
+            hint_surf = self.font.render(hint_text, True, WIN_COLOR)
             self.screen.blit(hint_surf, hint_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 30)))
 
         pygame.display.flip()
@@ -523,6 +548,11 @@ class Game:
     def run(self):
         while True:
             dt = self.clock.tick(60) / 1000.0
+
+            if self.win and self.win_timer > 0:
+                self.win_timer = max(0.0, self.win_timer - dt)
+            restart_allowed = self.game_over or (self.win and self.win_timer <= 0)
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
@@ -531,7 +561,7 @@ class Game:
                     if event.key == pygame.K_ESCAPE:
                         pygame.quit()
                         sys.exit()
-                    if event.key == pygame.K_r and (self.game_over or self.win):
+                    if event.key == pygame.K_r and restart_allowed:
                         self.reset()
                     if event.key == pygame.K_e:
                         self.activate_shield()
@@ -540,7 +570,7 @@ class Game:
 
             if self.game_over or self.win:
                 _, _, jbtn, jshoot, _ = self.joystick.read()
-                if (jbtn or jshoot) and not self._prev_button:
+                if restart_allowed and (jbtn or jshoot) and not self._prev_button:
                     self.reset()
                 self._prev_button = jbtn or jshoot
             else:

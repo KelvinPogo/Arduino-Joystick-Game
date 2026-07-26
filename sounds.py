@@ -49,6 +49,12 @@ def _mix(*segments):
     return out
 
 
+def _noise(duration, volume=1.0, attack=0.001, release=0.05):
+    n = int(SAMPLE_RATE * duration)
+    signal = np.random.uniform(-1.0, 1.0, n)
+    return signal * _envelope(n, attack, release) * volume
+
+
 def _to_sound(signal):
     signal = np.clip(signal, -1.0, 1.0)
     stereo = np.column_stack([signal, signal])
@@ -74,6 +80,11 @@ def build_sounds():
         _tone(1320, 0.22, "sine", 0.15, 0.02, 0.1),
     )
 
+    damage = _mix(
+        _sweep(220, 70, 0.15, "square", volume=0.35, attack=0.002, release=0.1),
+        _noise(0.08, volume=0.3, attack=0.001, release=0.06),
+    )
+
     game_over = _concat(
         _tone(392.00, 0.22, "sine", 0.5, 0.01, 0.05),   # G4
         _tone(311.13, 0.22, "sine", 0.5, 0.01, 0.05),   # Eb4
@@ -92,6 +103,7 @@ def build_sounds():
         "boss_shoot": _to_sound(boss_shoot),
         "health_up": _to_sound(health_up),
         "shield": _to_sound(shield),
+        "damage": _to_sound(damage),
         "game_over": _to_sound(game_over),
         "you_win": _to_sound(you_win),
     }
